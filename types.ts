@@ -6,12 +6,15 @@ export interface Scene {
   audioData?: ArrayBuffer; // Raw PCM
 }
 
+export type AspectRatio = '16:9' | '9:16';
+
 export interface Story {
   id: string;
   title: string;
   introduction: string;
   scenes: Scene[];
   createdAt: number;
+  aspectRatio: AspectRatio;
 }
 
 export enum VoiceName {
@@ -28,5 +31,6 @@ export interface AppState {
   isLoading: boolean;
   loadingStep: string;
   selectedVoice: VoiceName;
+  selectedAspectRatio: AspectRatio;
   isImmersive: boolean;
 }

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, Story, VoiceName, Scene } from './types';
+import { AppState, Story, VoiceName, Scene, AspectRatio } from './types';
 import { generateStoryStructure, generateSceneImage, generateVoiceover } from './services/geminiService';
 import { StoryPlayer } from './components/StoryPlayer';
 import { Button } from './components/Button';
 import { VoiceSelector } from './components/VoiceSelector';
-import { BookOpen, History as HistoryIcon, Sparkles, ArrowRight, Trash2, Map } from 'lucide-react';
+import { BookOpen, History as HistoryIcon, Sparkles, ArrowRight, Trash2, Map, Monitor, Smartphone } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function App() {
@@ -14,6 +14,7 @@ export default function App() {
     isLoading: false,
     loadingStep: '',
     selectedVoice: VoiceName.Puck,
+    selectedAspectRatio: '16:9',
     isImmersive: false,
   });
 
@@ -24,11 +25,13 @@ export default function App() {
     const saved = localStorage.getItem('history_magic_stories');
     if (saved) {
       try {
-        // We need to handle potentially large data. 
-        // In a real app, use IndexedDB. LocalStorage has 5MB limit.
-        // We might just store metadata and text, but for this demo we try to load it all.
         const parsed = JSON.parse(saved);
-        setState(s => ({ ...s, savedStories: parsed }));
+        // Migrate old stories to have a default aspect ratio if missing
+        const migrated = parsed.map((s: any) => ({
+            ...s,
+            aspectRatio: s.aspectRatio || '16:9'
+        }));
+        setState(s => ({ ...s, savedStories: migrated }));
       } catch (e) {
         console.error("Failed to load stories", e);
       }
@@ -36,26 +39,19 @@ export default function App() {
   }, []);
 
   const saveStoryToStorage = (story: Story) => {
-    // Limit to last 2 to save space because 12 scenes/images per story is heavy for LocalStorage
     const newSaved = [story, ...state.savedStories].slice(0, 2); 
     setState(s => ({ ...s, savedStories: newSaved }));
     try {
-        // Remove Audio buffers before saving to JSON as they can't be stringified properly
-        // We will convert array buffers to base64 string if we want to persist audio, 
-        // but to save space let's strip audio and regenerate or just keep it in memory for session.
-        // Actually, user asked to "save". We will try to save everything but warn if fails.
-        // For the `audioData` (ArrayBuffer), we can't JSON.stringify it directly.
-        // We'll skip saving audio to localStorage to avoid hitting limits instantly. Images are already heavy.
         const storiesToSave = newSaved.map(s => ({
             ...s,
             scenes: s.scenes.map(scene => ({
                 ...scene,
-                audioData: undefined // Don't persist audio to localStorage
+                audioData: undefined
             }))
         }));
         localStorage.setItem('history_magic_stories', JSON.stringify(storiesToSave));
     } catch (e) {
-        alert("Storage full! Old stories might be overwritten or saving failed.");
+        alert("Storage full! Old stories might be overwritten.");
     }
   };
 
@@ -73,20 +69,27 @@ export default function App() {
 
     try {
       // 1. Generate Text Structure
-      const structure = await generateStoryStructure(topicInput);
+      const structure = await generateStoryStructure(topicInput, state.selectedAspectRatio);
       
+      // 1.5 Append Outro Scene
+      const outroScene = {
+          id: structure.scenes.length + 1,
+          narration: "如果故事讲的不错，能不能给个一键三连！如果你还想听其他的历史故事，请在评论区留言告诉我们！",
+          visual_prompt: "cute ending scene, theatrical curtain call, children waving goodbye, warm cozy lighting, detailed background, magical atmosphere"
+      };
+      structure.scenes.push(outroScene);
+
       setState(s => ({ ...s, loadingStep: `准备生成 ${structure.scenes.length} 个场景的素材...` }));
       
-      // 2. Generate Assets for each scene sequentially to handle rate limits nicely or parallel if possible
-      // We do it sequential to update progress.
+      // 2. Generate Assets
       const scenesWithAssets: Scene[] = [];
       
       for (let i = 0; i < structure.scenes.length; i++) {
         const scene = structure.scenes[i];
         
         setState(s => ({ ...s, loadingStep: `正在绘制历史场景 (${i + 1}/${structure.scenes.length})...` }));
-        // Generate Image
-        const imageData = await generateSceneImage(scene.visual_prompt);
+        // Generate Image with correct Aspect Ratio
+        const imageData = await generateSceneImage(scene.visual_prompt, state.selectedAspectRatio);
         
         setState(s => ({ ...s, loadingStep: `正在录制旁白 (${i + 1}/${structure.scenes.length})...` }));
         // Generate Audio
@@ -104,7 +107,8 @@ export default function App() {
         title: structure.title,
         introduction: structure.introduction,
         scenes: scenesWithAssets,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        aspectRatio: state.selectedAspectRatio
       };
 
       saveStoryToStorage(newStory);
@@ -118,10 +122,7 @@ export default function App() {
   };
 
   const playSavedStory = (story: Story) => {
-    // If audio was stripped during save, we might need to re-generate or play without audio.
-    // For this demo, we assume if it's missing, it just won't play or we could offer a "regenerate audio" button.
-    // We'll just open it.
-    setState(s => ({ ...s, currentStory: story }));
+    setState(s => ({ ...s, currentStory: story, selectedAspectRatio: story.aspectRatio }));
   };
 
   // ---------------- RENDER ----------------
@@ -176,17 +177,50 @@ export default function App() {
                   className="w-full p-5 text-lg rounded-2xl bg-slate-50 border-2 border-slate-200 focus:border-amber-400 focus:ring-4 focus:ring-amber-100 outline-none transition-all placeholder:text-slate-300"
                   disabled={state.isLoading}
                 />
-
-                <VoiceSelector 
-                  selected={state.selectedVoice} 
-                  onSelect={(v) => setState(s => ({ ...s, selectedVoice: v }))} 
-                />
+                
+                {/* Config Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <VoiceSelector 
+                    selected={state.selectedVoice} 
+                    onSelect={(v) => setState(s => ({ ...s, selectedVoice: v }))} 
+                    />
+                    
+                    {/* Aspect Ratio Selector */}
+                    <div className="flex flex-col gap-2">
+                        <label className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                            <Monitor size={16} />
+                            画面比例
+                        </label>
+                        <div className="flex bg-slate-100 p-1 rounded-full border border-slate-200">
+                            <button
+                                onClick={() => setState(s => ({ ...s, selectedAspectRatio: '16:9' }))}
+                                className={`flex-1 flex items-center justify-center gap-2 py-1 px-3 rounded-full text-sm font-bold transition-all ${
+                                    state.selectedAspectRatio === '16:9' 
+                                    ? 'bg-white text-indigo-600 shadow-sm' 
+                                    : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                <Monitor size={14} /> 电脑 (16:9)
+                            </button>
+                            <button
+                                onClick={() => setState(s => ({ ...s, selectedAspectRatio: '9:16' }))}
+                                className={`flex-1 flex items-center justify-center gap-2 py-1 px-3 rounded-full text-sm font-bold transition-all ${
+                                    state.selectedAspectRatio === '9:16' 
+                                    ? 'bg-white text-indigo-600 shadow-sm' 
+                                    : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                <Smartphone size={14} /> 手机 (9:16)
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
                 <Button 
                   onClick={handleGenerate} 
                   loading={state.isLoading} 
                   size="lg" 
-                  className="w-full"
+                  className="w-full shadow-amber-200/50 hover:shadow-amber-300/50"
                 >
                    {state.isLoading ? state.loadingStep : '开始生成动画故事'} 
                    {!state.isLoading && <Sparkles size={20} />}
@@ -234,9 +268,14 @@ export default function App() {
                           <h4 className="font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
                             {story.title}
                           </h4>
-                          <p className="text-xs text-slate-400 mt-1">
-                            {new Date(story.createdAt).toLocaleDateString()}
-                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-500">
+                                {story.aspectRatio === '9:16' ? '📱 竖屏' : '🖥️ 横屏'}
+                            </span>
+                            <p className="text-xs text-slate-400">
+                                {new Date(story.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
                         </div>
                         <div className="bg-indigo-50 p-2 rounded-full text-indigo-400 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
                           <ArrowRight size={16} />
