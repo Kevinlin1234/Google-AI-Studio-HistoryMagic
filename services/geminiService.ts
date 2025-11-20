@@ -107,3 +107,37 @@ export const generateVoiceover = async (text: string, voice: VoiceName): Promise
 
   return decodeBase64(base64Audio).buffer;
 };
+
+export const generateRecommendedTopics = async (): Promise<string[]> => {
+  const ai = getClient();
+  const prompt = `
+    请推荐 5 个适合 5-8 岁儿童的中国历史典故、神话传说或成语故事。
+    要求：
+    1. 知名度高，趣味性强，有教育意义。
+    2. 只要标题，不要解释。
+    3. 随机一点，每次尝试推荐不同的。
+    4. 返回 JSON 字符串数组格式。
+    例如: ["草船借箭", "孔融让梨", "大闹天宫"]
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        }
+        }
+    });
+
+    const text = response.text;
+    if (!text) return ["草船借箭", "孔融让梨", "大闹天宫", "哪吒闹海", "司马光砸缸"];
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Failed to fetch topics", error);
+    return ["草船借箭", "孔融让梨", "大闹天宫", "哪吒闹海", "司马光砸缸"];
+  }
+};
